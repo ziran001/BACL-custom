@@ -14,9 +14,14 @@ class OneVsRestBCELoss(nn.Module):
     """BCE classifier used by the representation-learning stage of BACL."""
 
     def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        target = F.one_hot(labels, num_classes=logits.shape[1]).to(dtype=logits.dtype)
-        return F.binary_cross_entropy_with_logits(logits, target, reduction="sum") / max(
-            logits.shape[0], 1
+        # This loss sums over every class. Force that reduction to fp32 so a
+        # large foreground vocabulary cannot overflow while autocast is active.
+        stable_logits = logits.float()
+        target = F.one_hot(labels, num_classes=logits.shape[1]).float()
+        return F.binary_cross_entropy_with_logits(
+            stable_logits, target, reduction="sum"
+        ) / max(
+            stable_logits.shape[0], 1
         )
 
 
@@ -79,8 +84,9 @@ class ForegroundClassificationBalanceLoss(nn.Module):
         expected_channels = self.num_foreground_classes + 1
         if number_of_channels != expected_channels:
             raise ValueError(f"Expected {expected_channels} logits, got {number_of_channels}")
-        target = F.one_hot(labels, num_classes=number_of_channels).to(dtype=logits.dtype)
-        margin = torch.zeros_like(logits)
+        stable_logits = logits.float()
+        target = F.one_hot(labels, num_classes=number_of_channels).float()
+        margin = torch.zeros_like(stable_logits)
         positive = labels > 0
 
         if positive.any():
@@ -90,21 +96,26 @@ class ForegroundClassificationBalanceLoss(nn.Module):
             denominator = confusion[:, gt].transpose(0, 1).clamp(min=1e-3)
             margin[positive, 1:] = (numerator / denominator).log() * self.alpha
 
-        weights = torch.ones_like(logits)
+        weights = torch.ones_like(stable_logits)
         if reweight and positive.any():
-            probabilities = self.probabilities(logits[positive].detach())
+            probabilities = self.probabilities(stable_logits[positive].detach())
             gt_probability = probabilities.gather(1, labels[positive, None])
             foreground_weights = (
                 (probabilities[:, 1:] >= gt_probability)
                 | (probabilities[:, 1:] >= self.prob_threshold)
-            ).to(logits.dtype)
+            ).to(stable_logits.dtype)
             positive_weights = torch.cat(
-                (torch.ones((foreground_weights.shape[0], 1), device=logits.device), foreground_weights),
+                (
+                    torch.ones((foreground_weights.shape[0], 1), device=logits.device),
+                    foreground_weights,
+                ),
                 dim=1,
             )
             weights[positive] = positive_weights
 
-        loss = F.binary_cross_entropy_with_logits(logits + margin, target, reduction="none")
+        loss = F.binary_cross_entropy_with_logits(
+            stable_logits + margin, target, reduction="none"
+        )
         loss = (weights * loss).sum() / max(number_of_samples, 1)
-        self._update_confusion(logits.detach(), labels)
+        self._update_confusion(stable_logits.detach(), labels)
         return loss
