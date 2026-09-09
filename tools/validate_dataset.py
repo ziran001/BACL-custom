@@ -38,6 +38,11 @@ def main() -> None:
                 with Image.open(image_path) as image:
                     width, height = image.size
                     image.verify()
+                # ``verify`` checks the container structure but does not decode
+                # pixel data. Reopen and load the image so truncated files are
+                # caught before a long training run reaches them.
+                with Image.open(image_path) as image:
+                    image.load()
                 target = dataset._read_target(index, width, height)
                 box_count += len(target["labels"])
                 distribution.update((target["labels"] - 1).tolist())
