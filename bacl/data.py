@@ -177,8 +177,11 @@ class YoloDetectionDataset(Dataset):
         image_path = self.image_paths[index]
         if not image_path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
-        with Image.open(image_path) as source:
-            image = source.convert("RGB")
+        try:
+            with Image.open(image_path) as source:
+                image = source.convert("RGB")
+        except (OSError, ValueError) as exc:
+            raise OSError(f"Failed to decode image {image_path}: {exc}") from exc
         width, height = image.size
         target = self._read_target(index, width, height)
         image_tensor = TF.pil_to_tensor(image).float().div_(255.0)
