@@ -36,7 +36,7 @@ Python 3.10 or 3.11 is recommended. Install a CUDA-enabled PyTorch build that
 matches the server driver first, then install this project:
 
 ```bash
-git clone YOUR_GITHUB_REPOSITORY_URL
+git clone https://github.com/ziran001/BACL-custom.git
 cd BACL-custom
 python -m venv .venv
 source .venv/bin/activate
