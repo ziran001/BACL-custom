@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bacl-torchvision"
+version = "0.1.0"
+description = "A modern TorchVision port of BACL for custom YOLO detection datasets"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = {text = "Apache-2.0"}
+dependencies = [
+  "numpy>=1.24",
+  "Pillow>=9.5",
+  "PyYAML>=6.0",
+  "torch>=2.2",
+  "torchvision>=0.17",
+  "tqdm>=4.66",
+]
+
+[tool.setuptools.packages.find]
+include = ["bacl*"]
