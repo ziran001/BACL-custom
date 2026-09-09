@@ -1,0 +1,13 @@
+{
+  "dataset_classes": 170,
+  "recommended_stage1_epochs": 12,
+  "recommended_stage2_epochs": 12,
+  "per_gpu_batch_size": 2,
+  "base_learning_rate_for_batch_16": 0.02,
+  "fcbl_alpha": 0.85,
+  "fcbl_probability_threshold": 0.7,
+  "fhm_feature_decay": 0.1,
+  "fhm_sampled_classes": 8,
+  "fhm_sampled_features_per_class": 12,
+  "fhm_statistics_boxes_per_gt": 16
+}
