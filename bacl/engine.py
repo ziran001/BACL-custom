@@ -22,13 +22,18 @@ def train_one_epoch(
     device: torch.device,
     epoch: int,
     amp: bool = True,
+    grad_clip_norm: float | None = 10.0,
     max_batches: int | None = None,
     show_progress: bool = True,
 ) -> dict[str, float]:
     model.train()
     unwrapped = model.module if hasattr(model, "module") else model
     unwrapped.roi_heads.set_epoch(epoch)
-    scaler = torch.amp.GradScaler("cuda", enabled=amp and device.type == "cuda")
+    # BCE sums across all foreground channels, so use a conservative initial
+    # scale instead of the generic 65536 default used by GradScaler.
+    scaler = torch.amp.GradScaler(
+        "cuda", init_scale=1024.0, enabled=amp and device.type == "cuda"
+    )
     totals: defaultdict[str, float] = defaultdict(float)
     number_of_batches = 0
     start = time.perf_counter()
@@ -50,6 +55,9 @@ def train_one_epoch(
             details = {name: float(value.detach().cpu()) for name, value in losses.items()}
             raise FloatingPointError(f"Non-finite training loss: {details}")
         scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
+        if grad_clip_norm is not None and grad_clip_norm > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_norm)
         scaler.step(optimizer)
         scaler.update()
 
