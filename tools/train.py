@@ -34,6 +34,12 @@ def parse_args():
     parser.add_argument("--detections-per-image", type=int, default=300)
     parser.add_argument("--no-pretrained", action="store_true")
     parser.add_argument("--no-amp", action="store_true")
+    parser.add_argument(
+        "--grad-clip-norm",
+        type=float,
+        default=10.0,
+        help="Maximum gradient norm; set to 0 to disable clipping",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--eval-every", type=int, default=1)
     parser.add_argument("--max-train-batches", type=int, default=None)
@@ -164,6 +170,7 @@ def main() -> None:
             device,
             epoch,
             amp=not args.no_amp,
+            grad_clip_norm=args.grad_clip_norm,
             max_batches=args.max_train_batches,
             show_progress=main_process,
         )
