@@ -1,0 +1,10 @@
+format: lvis
+path: /root/autodl-tmp/datasets
+train: annotations/lvis_v1_train.json
+val: annotations/lvis_v1_val.json
+test: annotations/lvis_v1_test.json
+# Resolve JSON file_name relative to this directory within path.
+# For file_name "images/train/a.jpg", use "."; for "train/a.jpg", use "images".
+image_root: .
+# Only set true for fully annotated custom data whose LVIS metadata is missing.
+exhaustive: false

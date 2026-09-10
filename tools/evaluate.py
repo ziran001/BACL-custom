@@ -7,14 +7,17 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
 
-from bacl.data import YoloDetectionDataset, collate_fn, resolve_dataset_config
+from bacl.data import (
+    add_dataset_arguments, build_detection_dataset, check_checkpoint_dataset,
+    collate_fn, resolve_dataset_config,
+)
 from bacl.engine import evaluate_map50
 from bacl.model import build_bacl_fasterrcnn
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate a BACL checkpoint at IoU=0.50")
-    parser.add_argument("--data", required=True)
+    add_dataset_arguments(parser)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--split", choices=["val", "test"], default="test")
     parser.add_argument("--output", default="evaluation.json")
@@ -23,11 +26,9 @@ def main() -> None:
     parser.add_argument("--max-batches", type=int, default=None)
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = resolve_dataset_config(args.data)
+    config = resolve_dataset_config(args.data, args.data_format)
     payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    checkpoint_names = tuple(payload["class_names"])
-    if checkpoint_names != config.class_names:
-        raise ValueError("Checkpoint class names/order do not match the dataset")
+    check_checkpoint_dataset(payload, config)
     model = build_bacl_fasterrcnn(
         len(config.class_names),
         stage=str(payload.get("stage", "classifier")),
@@ -36,7 +37,7 @@ def main() -> None:
     )
     model.load_state_dict(payload["model"], strict=True)
     model.to(device)
-    dataset = YoloDetectionDataset(config, split=args.split)
+    dataset = build_detection_dataset(config, split=args.split)
     loader = DataLoader(
         dataset,
         batch_size=1,
@@ -53,6 +54,9 @@ def main() -> None:
         max_batches=args.max_batches,
     )
     metrics["class_names"] = list(config.class_names)
+    metrics["dataset_format"] = config.dataset_format
+    metrics["category_ids"] = list(config.category_ids)
+    metrics["metric"] = "bbox mAP@0.50 (101-point); not official LVIS AP@0.50:0.95"
     metrics["per_class"] = [
         {
             "name": name,
@@ -66,7 +70,9 @@ def main() -> None:
         )
     ]
     output = json.dumps(metrics, indent=2, ensure_ascii=False)
-    Path(args.output).write_text(output + "\n", encoding="utf-8")
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(output + "\n", encoding="utf-8")
     print(output)
 
 

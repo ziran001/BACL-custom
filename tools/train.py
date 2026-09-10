@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 from pathlib import Path
@@ -11,14 +12,21 @@ import torch
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler, RandomSampler, SequentialSampler
 
-from bacl.data import YoloDetectionDataset, collate_fn, resolve_dataset_config
+from bacl.data import (
+    add_dataset_arguments, build_detection_dataset, check_checkpoint_dataset,
+    class_balanced_dataset, collate_fn, resolve_dataset_config,
+)
 from bacl.engine import evaluate_map50, save_checkpoint, train_one_epoch
 from bacl.model import build_bacl_fasterrcnn, freeze_for_classifier_stage, trainable_parameters
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train BACL Faster R-CNN on a YOLO dataset")
-    parser.add_argument("--data", required=True, help="Dataset root or dataset.yaml")
+    parser = argparse.ArgumentParser(description="Train BACL Faster R-CNN on LVIS or YOLO data")
+    add_dataset_arguments(parser)
+    parser.add_argument(
+        "--repeat-threshold", type=float, default=0.001,
+        help="LVIS class-balanced repeat threshold; 0 disables repeating (YOLO is unchanged)",
+    )
     parser.add_argument("--stage", required=True, choices=["representation", "classifier"])
     parser.add_argument("--checkpoint", default=None, help="Weights used to initialize this stage")
     parser.add_argument("--output", required=True)
@@ -85,6 +93,8 @@ def main() -> None:
         raise ValueError("--warmup-iters must be non-negative")
     if not 0.0 < args.warmup_ratio <= 1.0:
         raise ValueError("--warmup-ratio must be in (0, 1]")
+    if not math.isfinite(args.repeat_threshold) or args.repeat_threshold < 0:
+        raise ValueError("--repeat-threshold must be finite and non-negative")
     rank, world_size, local_rank = distributed_context()
     main_process = rank == 0
     random.seed(args.seed + rank)
@@ -94,9 +104,24 @@ def main() -> None:
         torch.cuda.manual_seed_all(args.seed + rank)
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
 
-    config = resolve_dataset_config(args.data)
-    train_dataset = YoloDetectionDataset(config, split="train", augment=True)
-    val_dataset = YoloDetectionDataset(config, split="val", augment=False)
+    config = resolve_dataset_config(args.data, args.data_format)
+    train_dataset = build_detection_dataset(config, split="train", augment=True)
+    val_dataset = build_detection_dataset(config, split="val", augment=False)
+    original_train_size = len(train_dataset)
+    if config.dataset_format == "lvis" and args.repeat_threshold > 0:
+        train_dataset = class_balanced_dataset(train_dataset, args.repeat_threshold)
+    if main_process:
+        print(f"dataset: {config.dataset_format}, root: {config.root}, "
+              f"classes: {len(config.class_names)}, train images: {original_train_size}, "
+              f"samples/epoch: {len(train_dataset)}, val images: {len(val_dataset)}")
+    dataset_metadata = {
+        "dataset_format": config.dataset_format,
+        "category_ids": list(config.category_ids),
+        "class_names": list(config.class_names),
+        "root": str(config.root),
+        "train_split": str(config.train_split),
+        "val_split": str(config.val_split),
+    }
     train_sampler = (
         DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True)
         if world_size > 1
@@ -141,9 +166,7 @@ def main() -> None:
     )
     if args.checkpoint:
         payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-        checkpoint_names = tuple(payload.get("class_names", ()))
-        if checkpoint_names and checkpoint_names != config.class_names:
-            raise ValueError("Checkpoint class names/order do not match the dataset")
+        check_checkpoint_dataset(payload, config)
         model.load_state_dict(payload["model"], strict=True)
     elif args.stage == "classifier":
         raise ValueError("Classifier stage requires --checkpoint from the representation stage")
@@ -171,6 +194,9 @@ def main() -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "run_args.json").write_text(
             json.dumps(vars(args), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        (output_dir / "dataset_config.json").write_text(
+            json.dumps(dataset_metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
 
     history: list[dict[str, object]] = []
@@ -224,7 +250,7 @@ def main() -> None:
                 epoch,
                 args.stage,
                 config.class_names,
-                {"history": history},
+                {"history": history, **dataset_metadata},
             )
             if is_best:
                 save_checkpoint(
@@ -234,7 +260,7 @@ def main() -> None:
                     epoch,
                     args.stage,
                     config.class_names,
-                    {"history": history, "best_map50": best_map50},
+                    {"history": history, "best_map50": best_map50, **dataset_metadata},
                 )
             (output_dir / "metrics.json").write_text(
                 json.dumps(history, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"

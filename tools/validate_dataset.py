@@ -8,33 +8,49 @@ from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
 
-from bacl.data import YoloDetectionDataset, resolve_dataset_config
+from bacl.data import add_dataset_arguments, build_detection_dataset, resolve_dataset_config
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Validate a YOLO detection dataset for BACL")
-    parser.add_argument("--data", required=True, help="Dataset root or dataset.yaml")
+    parser = argparse.ArgumentParser(description="Validate an LVIS or YOLO detection dataset for BACL")
+    add_dataset_arguments(parser)
     parser.add_argument("--output", default=None, help="Optional JSON report path")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    config = resolve_dataset_config(args.data)
+    config = resolve_dataset_config(args.data, args.data_format)
     report: dict[str, object] = {
         "root": str(config.root),
         "num_classes": len(config.class_names),
+        "dataset_format": config.dataset_format,
+        "category_ids": list(config.category_ids),
+        "class_names": list(config.class_names),
         "splits": {},
     }
     errors: list[str] = []
     total_distribution = Counter()
+    image_owners: dict[Path, str] = {}
 
     for split in ("train", "val", "test"):
-        dataset = YoloDetectionDataset(config, split=split)
+        if split == "test" and config.test_split is None:
+            report["splits"][split] = {"skipped": "No test split configured"}
+            continue
+        try:
+            dataset = build_detection_dataset(config, split=split)
+        except Exception as exc:
+            errors.append(f"{split}: {exc}")
+            report["splits"][split] = {"error": str(exc)}
+            continue
         distribution = Counter()
+        image_distribution = Counter()
         box_count = 0
         for index, image_path in enumerate(tqdm(dataset.image_paths, desc=f"validate {split}")):
             try:
+                if image_path in image_owners:
+                    raise ValueError(f"Duplicate image path; already listed in {image_owners[image_path]}")
+                image_owners[image_path] = split
                 with Image.open(image_path) as image:
                     width, height = image.size
                     image.verify()
@@ -46,6 +62,7 @@ def main() -> None:
                 target = dataset._read_target(index, width, height)
                 box_count += len(target["labels"])
                 distribution.update((target["labels"] - 1).tolist())
+                image_distribution.update(set((target["labels"] - 1).tolist()))
             except Exception as exc:  # report every bad source item before failing
                 errors.append(f"{split}: {image_path}: {exc}")
         total_distribution.update(distribution)
@@ -57,6 +74,7 @@ def main() -> None:
             "min_boxes_per_present_class": min((count for count in counts if count > 0), default=0),
             "max_boxes_per_class": max(counts, default=0),
             "class_box_counts": counts,
+            "class_image_counts": [image_distribution.get(i, 0) for i in range(len(config.class_names))],
         }
 
     all_counts = [total_distribution.get(index, 0) for index in range(len(config.class_names))]

@@ -132,6 +132,13 @@ def evaluate_map50(
         for output, target in zip(outputs, targets):
             gt_boxes = target["boxes"]
             gt_labels = target["labels"]
+            # LVIS is federated: unverified categories are not negatives, and
+            # unmatched predictions in non-exhaustive categories are ignored.
+            verified_labels = None
+            non_exhaustive = set()
+            if "neg_category_ids" in target:
+                verified_labels = set(gt_labels.tolist()) | set(target["neg_category_ids"].tolist())
+                non_exhaustive = set(target["not_exhaustive_category_ids"].tolist())
             for label in gt_labels.tolist():
                 ground_truth_count[label - 1] += 1
 
@@ -141,6 +148,8 @@ def evaluate_map50(
             present_classes = torch.unique(predicted_labels)
             for label_tensor in present_classes:
                 label = int(label_tensor)
+                if verified_labels is not None and label not in verified_labels:
+                    continue
                 class_index = label - 1
                 prediction_indices = torch.where(predicted_labels == label)[0]
                 prediction_indices = prediction_indices[
@@ -161,6 +170,8 @@ def evaluate_map50(
                         if float(best_iou) >= 0.5:
                             matched[best_index] = True
                             is_true_positive = True
+                    if not is_true_positive and label in non_exhaustive:
+                        continue
                     scores[class_index].append(score)
                     true_positives[class_index].append(is_true_positive)
 
