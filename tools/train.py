@@ -28,6 +28,18 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight-decay", type=float, default=5e-5)
     parser.add_argument("--momentum", type=float, default=0.9)
+    parser.add_argument(
+        "--warmup-iters",
+        type=int,
+        default=500,
+        help="Linear learning-rate warmup iterations in epoch 1; set to 0 to disable",
+    )
+    parser.add_argument(
+        "--warmup-ratio",
+        type=float,
+        default=0.001,
+        help="Initial learning rate as a fraction of the target rate during warmup",
+    )
     parser.add_argument("--min-sizes", default="640,672,704,736,768,800")
     parser.add_argument("--max-size", type=int, default=1333)
     parser.add_argument("--score-threshold", type=float, default=1e-4)
@@ -69,6 +81,10 @@ def distributed_context() -> tuple[int, int, int]:
 
 def main() -> None:
     args = parse_args()
+    if args.warmup_iters < 0:
+        raise ValueError("--warmup-iters must be non-negative")
+    if not 0.0 < args.warmup_ratio <= 1.0:
+        raise ValueError("--warmup-ratio must be in (0, 1]")
     rank, world_size, local_rank = distributed_context()
     main_process = rank == 0
     random.seed(args.seed + rank)
@@ -171,6 +187,8 @@ def main() -> None:
             epoch,
             amp=not args.no_amp,
             grad_clip_norm=args.grad_clip_norm,
+            warmup_iters=args.warmup_iters,
+            warmup_ratio=args.warmup_ratio,
             max_batches=args.max_train_batches,
             show_progress=main_process,
         )

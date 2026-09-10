@@ -23,6 +23,8 @@ def train_one_epoch(
     epoch: int,
     amp: bool = True,
     grad_clip_norm: float | None = 10.0,
+    warmup_iters: int = 0,
+    warmup_ratio: float = 0.001,
     max_batches: int | None = None,
     show_progress: bool = True,
 ) -> dict[str, float]:
@@ -38,10 +40,16 @@ def train_one_epoch(
     number_of_batches = 0
     start = time.perf_counter()
     progress = tqdm(loader, desc=f"train epoch {epoch + 1}", disable=not show_progress)
+    base_learning_rates = [group["lr"] for group in optimizer.param_groups]
 
     for batch_index, (images, targets) in enumerate(progress):
         if max_batches is not None and batch_index >= max_batches:
             break
+        if epoch == 0 and warmup_iters > 0:
+            progress_ratio = min(batch_index / warmup_iters, 1.0)
+            factor = warmup_ratio + (1.0 - warmup_ratio) * progress_ratio
+            for group, base_learning_rate in zip(optimizer.param_groups, base_learning_rates):
+                group["lr"] = base_learning_rate * factor
         images = [image.to(device, non_blocking=True) for image in images]
         targets = move_targets(targets, device)
         optimizer.zero_grad(set_to_none=True)
@@ -66,7 +74,16 @@ def train_one_epoch(
         for name, value in losses.items():
             totals[name] += float(value.detach())
         if show_progress:
-            progress.set_postfix(loss=f"{float(loss.detach()):.4f}")
+            progress.set_postfix(
+                loss=f"{float(loss.detach()):.4f}",
+                lr=f"{optimizer.param_groups[0]['lr']:.3g}",
+            )
+
+    # Restore the scheduled learning rate even when a diagnostic run stops
+    # before all warmup iterations have completed.
+    if epoch == 0 and warmup_iters > 0:
+        for group, base_learning_rate in zip(optimizer.param_groups, base_learning_rates):
+            group["lr"] = base_learning_rate
 
     elapsed = time.perf_counter() - start
     if not number_of_batches:

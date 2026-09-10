@@ -86,6 +86,8 @@ python -m tools.train \
 The default learning rate follows the original linear-scaling convention:
 `0.02 × total_batch_size / 16`. Use `--lr` to override it. If memory is tight,
 reduce `--batch-size`, `--max-size`, or `--statistics-boxes-per-gt`.
+The first 500 iterations use the original linear warmup schedule, beginning at
+0.001 times the target learning rate. Use `--warmup-iters 0` to disable it.
 
 For multi-GPU stage training:
 
