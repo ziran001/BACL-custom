@@ -1,0 +1,14 @@
+# Install PyTorch/CUDA and mmcv-full separately as documented.
+# Original stack: Python 3.8 / PyTorch 1.7.0 / CUDA 11.0 / mmcv-full 1.2.7.
+numpy==1.23.5
+Cython==0.29.36
+Pillow==9.5.0
+PyYAML==6.0.1
+matplotlib==3.7.5
+opencv-python==4.8.1.78
+terminaltables==3.1.10
+six==1.16.0
+yapf==0.40.1
+addict==2.4.0
+mmpycocotools==12.0.3
+mmlvis==10.5.3

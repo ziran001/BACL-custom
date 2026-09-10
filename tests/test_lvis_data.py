@@ -184,7 +184,7 @@ class LvisDataTests(unittest.TestCase):
             check_checkpoint_dataset(payload, self.config)
 
     def test_validator_records_decode_errors_and_split_overlap(self):
-        from tools.validate_dataset import main
+        from tools.validate_dataset_torchvision import main
 
         (self.root / "images/train/1.jpg").write_bytes(b"not an image")
         val_file = self.root / "annotations/lvis_v1_val.json"

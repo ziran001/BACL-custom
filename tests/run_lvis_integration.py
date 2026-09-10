@@ -1,4 +1,4 @@
-"""Opt-in end-to-end LVIS CLI check; no pretrained downloads or real data required."""
+"""Opt-in LEGACY TorchVision CLI check; does not test the original backend."""
 from __future__ import annotations
 
 import json
@@ -16,7 +16,8 @@ def main():
         make_fixture(root)
 
         def run(module, *args):
-            command = [sys.executable, "-m", module, "--data", str(root), *map(str, args)]
+            command = [sys.executable, "-m", module, "--backend", "torchvision",
+                       "--data", str(root), *map(str, args)]
             print("RUN", " ".join(command), flush=True)
             subprocess.run(command, check=True)
 

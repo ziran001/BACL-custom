@@ -1,0 +1,10 @@
+# Python 3.8-3.11 CPU source/config/LVIS tests; NOT a native training environment.
+# Install into a separate environment, never alongside mmcv-full.
+numpy==1.23.5
+mmcv==1.2.7
+mmlvis==10.5.3
+pycocotools>=2.0.7
+Pillow>=9.5
+PyYAML>=6.0
+yapf==0.40.1
+opencv-python<4.12

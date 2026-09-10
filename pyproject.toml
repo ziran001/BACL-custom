@@ -3,20 +3,29 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bacl-torchvision"
-version = "0.1.0"
-description = "A modern TorchVision port of BACL for custom LVIS and YOLO detection datasets"
+name = "bacl-custom"
+version = "0.2.0"
+description = "Pinned original BACL with custom LVIS bbox dataset adapters"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.8,<3.13"
 license = {text = "Apache-2.0"}
 dependencies = [
-  "numpy>=1.24",
   "Pillow>=9.5",
   "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Use a separate Python >=3.10 environment for the approximate legacy port.
+torchvision = [
+  "numpy>=1.24",
   "torch>=2.2",
   "torchvision>=0.17",
   "tqdm>=4.66",
 ]
 
 [tool.setuptools.packages.find]
-include = ["bacl*", "tools*"]
+include = ["bacl*", "tools*", "third_party"]
+namespaces = false
+
+[tool.setuptools.package-data]
+third_party = ["UPSTREAM_LOCK.json", "BACL/**/*", "BACL/*"]

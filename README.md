@@ -1,23 +1,18 @@
-# BACL TorchVision port for custom LVIS / YOLO detection datasets
+# BACL-custom：原始 BACL + 自定义 LVIS bbox 数据
 
-This repository is a runnable modern-PyTorch port of
-[Tianhao-Qi/BACL](https://github.com/Tianhao-Qi/BACL). It trains Faster R-CNN
-directly from LVIS JSON or a YOLO detection dataset and keeps the central BACL ideas:
+默认后端直接调用 [Tianhao-Qi/BACL 原源码](https://github.com/Tianhao-Qi/BACL/tree/65536623361587286d99c70133b886792a84463d)，
+固定提交 `65536623361587286d99c70133b886792a84463d`，包含逐文件 SHA 校验。
+训练模型、BCE/FCBL、FHM、BoxGn 和官方 LVIS 评估沿用原实现。
 
-- decoupled representation and classifier training;
-- Foreground Classification Balance Loss (FCBL);
-- cumulative foreground confusion statistics;
-- per-class feature means/variances;
-- feature hallucination biased toward poorly classified classes.
+你的 JSON 只有框，没有实例掩码，因此按已确认的 bbox 适配关闭第一阶段 CopyPaste，
+同时关闭 mask 加载和从 mask 重算 bbox。其余原始实验配置保留。
+这是“原源码 + 明确的数据适配”，不是在自定义数据上宣称复现原论文数值。
 
-It does **not** vendor the original historical MMDetection fork and is not a
-bit-exact reproduction. See [ATTRIBUTION.md](ATTRIBUTION.md).
+完整对照、依赖安装和验证边界见 [原源码对照说明](docs/UPSTREAM_ALIGNMENT.md)。
 
-## Expected dataset layout
+## 数据
 
-### LVIS (AutoDL 默认配置)
-
-所有数据命令的默认根目录为 `/root/autodl-tmp/datasets`。已上传的标注可直接读取：
+默认目录，无需重新转换 JSON：
 
 ```text
 /root/autodl-tmp/datasets/
@@ -28,185 +23,91 @@ bit-exact reproduction. See [ATTRIBUTION.md](ATTRIBUTION.md).
 └── images/...
 ```
 
-图片位置由 JSON `images[].file_name` 决定：例如 `images/train/a.jpg` 对应
-`/root/autodl-tmp/datasets/images/train/a.jpg`。官方 LVIS 没有 `file_name` 时，
-使用 `coco_url` 最后两段（如 `train2017/000000123456.jpg`）定位本地图片，不下载图片。
+图片按原 JSON 的 `file_name` 相对于数据根目录解析，例如 `images/example.jpg`。
+也支持 [configs/mollusks_lvis.yaml](configs/mollusks_lvis.yaml)。
+从 train 的 categories 读取类别及 ID 映射，不修改上传标注、不生成矩形伪掩码。
+当前数据为 170 类，train/val/test 分别 13673/1721/1721 张图。
+训练只要求 train/val；独立 test 评估额外要求 test 标注。
 
-无需 `dataset.yaml`、`classes.txt`、分割 TXT 或 YOLO 标签。类别数和名称从
-`categories` 自动读取；按数值排序的 category ID 映射为 `1..K`，背景为 `0`。
-训练、验证和测试必须有相同的完整类别 ID／名称表，顺序可不同，允许某个类别没有目标。
+## 安装与检查
 
-现有 [configs/mollusks_lvis.yaml](configs/mollusks_lvis.yaml) 已配置你的服务器路径。
-非默认布局可用 `--data configs/mollusks_lvis.yaml`，修改其中的 `image_root`：
-若 JSON 是 `train/a.jpg`、实际图片在 `images/train/a.jpg`，设为 `images`。
-也可将配置存为数据目录的 `dataset_lvis.yaml`，传入根目录时会优先读取它。
-标准 LVIS JSON 优先于旧 YOLO YAML；多个同分割 JSON 同时存在时要求用 YAML 明确选择。
-
-标准 LVIS 每张图片应有 `neg_category_ids` 和 `not_exhaustive_category_ids`。
-若自定义导出缺少这些字段，**仅当数据确实完整标注所有类别**时，在 YAML 设置
-`exhaustive: true`。读取器会补齐缺失字段，不修改原始 JSON，也不覆盖已有字段。
-不要对部分标注数据使用此选项。
-
-本项目仅做边界框检测，读取像素单位 `bbox: [x, y, width, height]`；
-`segmentation: []` 可用，不训练实例掩码。当前端口不支持 `iscrowd=1` 或 `ignore=1`
-训练框，读取时会报错。负类别／非完整标注字段用于评估；训练仍沿用该端口的
-BCE/FCBL 和 RPN 样本策略。
-
-### YOLO (仍然支持)
-
-```text
-dataset-root/
-├── dataset.yaml
-├── classes.txt
-├── train.txt
-├── val.txt
-├── test.txt
-├── images/
-└── labels/
-```
-
-Labels must use standard normalized YOLO detection rows:
-`class_id center_x center_y width height`. The loader converts class IDs from
-YOLO's `0..K-1` convention to TorchVision's `1..K` convention internally.
-To explicitly select YOLO when both formats exist, pass `--data-format yolo`.
-
-## Server installation
-
-Python 3.10 or 3.11 is recommended. Install a CUDA-enabled PyTorch build that
-matches the server driver first, then install this project:
-
-```bash
-git clone https://github.com/ziran001/BACL-custom.git
-cd BACL-custom
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install torch torchvision
-python -m pip install -e .
-```
-
-服务器已有仓库时，在仓库目录执行 `git pull --ff-only origin main`，然后
-`python -m pip install -e .`。
-
-Validate the transferred dataset before using GPU time:
+先按 [Linux 独立环境说明](docs/UPSTREAM_ALIGNMENT.md#linuxautodl-独立环境) 安装历史
+PyTorch 1.7 / CUDA 11.0 / mmcv-full 1.2.7 / mmlvis 10.5.3 环境。
+不要在原有现代 TorchVision 环境中混装或直接降级。
+服务器 GPU 必须支持该环境；新 GPU 的兼容性需要实际检查。
 
 ```bash
 python -m tools.validate_dataset --data /root/autodl-tmp/datasets \
-  --output dataset_report.json
-```
-
-The resolver ignores a stale Windows `path:` in `dataset.yaml` when the YAML's
-own directory contains `images/` and the split files.
-Validation fully decodes images and checks boxes, JSON dimensions, category
-consistency and duplicate image paths within/across splits. A missing optional
-LVIS test split is reported as skipped; explicitly configured missing files fail.
-
-## Training
-
-LVIS training enables the original base LVIS config's class-balanced repeating
-with threshold `1e-3`. Each image is repeated
-`ceil(max(1, sqrt(threshold / class_image_frequency)))` times, taking the maximum
-over its categories. Empty images are retained once. Use `--repeat-threshold 0`
-to disable it. YOLO, validation and test datasets are not repeated.
-
-Stage 1 learns the representation with one-vs-rest BCE:
-
-```bash
-python -m tools.train \
-  --data /root/autodl-tmp/datasets \
-  --stage representation \
-  --epochs 12 \
-  --batch-size 2 \
-  --workers 8 \
-  --output runs/representation
-```
-
-Stage 2 loads stage 1, freezes the backbone/FPN/box feature MLP, trains the RPN
-and box predictors, and enables FCBL + FHM:
-
-```bash
-python -m tools.train \
-  --data /root/autodl-tmp/datasets \
-  --stage classifier \
-  --checkpoint runs/representation/last.pth \
-  --epochs 12 \
-  --batch-size 2 \
-  --workers 8 \
-  --output runs/classifier
-```
-
-The default learning rate follows the original linear-scaling convention:
-`0.02 × total_batch_size / 16`. Use `--lr` to override it. If memory is tight,
-reduce `--batch-size`, `--max-size`, or `--statistics-boxes-per-gt`.
-The first 500 iterations use the original linear warmup schedule, beginning at
-0.001 times the target learning rate. Use `--warmup-iters 0` to disable it.
-
-For multi-GPU stage training:
-
-```bash
-torchrun --standalone --nproc_per_node=4 -m tools.train \
-  --data /root/autodl-tmp/datasets \
-  --stage representation \
-  --epochs 12 \
-  --batch-size 2 \
-  --output runs/representation
-```
-
-Training checkpoints are deliberately ignored by Git. Distributed training
-saves checkpoints on rank 0; run evaluation afterward with one GPU.
-Checkpoints and `dataset_config.json` record class names and the LVIS category
-mapping. Loading checks consistency. Legacy YOLO checkpoints can initialize LVIS
-training if their class names and order match exactly.
-
-## Evaluation
-
-```bash
-python -m tools.evaluate \
-  --data /root/autodl-tmp/datasets \
-  --checkpoint runs/classifier/last.pth \
-  --split test \
-  --output runs/classifier/test_map50.json
-```
-
-The included evaluator reports 101-point interpolated `mAP@0.50` and per-class
-AP50. It is dependency-light and is not the COCO `mAP@0.50:0.95` metric.
-For LVIS it ignores unverified categories and unmatched detections in
-non-exhaustively annotated categories using the LVIS image metadata. It is still
-**not** the official LVIS `AP@0.50:0.95` or APr/APc/APf; do not compare it directly
-with the paper's tables. Metrics use the 0–1 scale. If only a validation split
-exists, specify `--split val`; a missing test set is never silently replaced.
-
-## Fast diagnostics
-
-Run one train/backward/inference step without downloading pretrained weights:
-
-```bash
+  --output outputs/dataset_validation.json
 python -m tools.smoke_test --data /root/autodl-tmp/datasets
 ```
 
-For a short end-to-end training-path check:
+validate 默认完整解码图片；快速检查可加 `--skip-decode`。
+smoke_test 检查源码、配置、数据及 CUDA NMS/RoIAlign 内核，不等于模型端到端训练通过。
+
+## 两阶段训练
+
+必须从原后端的第一阶段重新训练；旧 TorchVision 的 `last.pth`/`best.pth` 不兼容。
 
 ```bash
-python -m tools.train \
+# 可先追加 --dry-run，仅导出配置，不训练、不检查 checkpoint/CUDA。
+python -m tools.train --stage representation \
   --data /root/autodl-tmp/datasets \
-  --stage representation \
-  --epochs 1 \
-  --max-train-batches 2 \
-  --max-val-batches 2 \
-  --no-pretrained \
-  --min-sizes 256 \
-  --max-size 384 \
-  --output runs/debug
+  --output runs/official_representation --batch-size 2 --workers 2
+
+python -m tools.train --stage classifier \
+  --data /root/autodl-tmp/datasets \
+  --checkpoint runs/official_representation/epoch_12.pth \
+  --output runs/official_classifier --batch-size 2 --workers 2
 ```
 
-Run regression tests and an optional synthetic-data integration check:
+两阶段默认各 12 epochs；保留原 warmup 500、step=[8,11]、FP32 和无梯度裁剪。
+第一阶段 weight decay=0.00005，第二阶段=0.0001。
+默认学习率按 `0.02 × 全局batch / 16` 缩放；单卡 batch=2 时为 0.0025。
+每轮验证计算官方 bbox AP，最佳 checkpoint 按 `bbox_AP` 选取。
+类别、JSON SHA256、原代码版本、环境和实际配置写入输出目录。
+
+单卡也会初始化分布式进程组，因为原 FCBL 使用 all_reduce。多卡使用旧 PyTorch 自带启动器：
 
 ```bash
-python -m unittest discover -s tests -v
-python -m tests.run_lvis_integration
+python -m torch.distributed.launch --nproc_per_node=4 --use_env \
+  -m tools.train --stage representation \
+  --data /root/autodl-tmp/datasets \
+  --output runs/official_representation_4gpu --batch-size 2
 ```
 
-The integration check uses temporary LVIS data and no pretrained downloads. It
-runs validation, train/backward/inference, both training stages, checkpoint
-handoff and test evaluation on CUDA when available (otherwise CPU). It does not
-replace full validation of the real server dataset.
+同阶段恢复训练使用 `--resume-from runs/official_classifier/epoch_6.pth`；
+不要同时传 `--checkpoint`。不要把新实验写进已有 checkpoint 的目录。
+
+## 官方 LVIS 评估
+
+```bash
+python -m tools.evaluate --stage classifier \
+  --data /root/autodl-tmp/datasets \
+  --checkpoint runs/official_classifier/epoch_12.pth \
+  --split test --output outputs/lvis_test.json
+```
+
+主指标 `metrics.bbox_AP` 是 IoU=0.50:0.05:0.95 的平均 AP；
+`bbox_AP50` 和 `bbox_AP75` 是独立的单阈值指标，另有 APr/APc/APf/APs/APm/APl。
+JSON 和原终端表保留 0..1 标度、三位小数；换算百分数时乘以 100。
+当前 categories 没有 rare 类，所以 APr=-1 表示“不适用”，并非模型 AP 为 0。
+未连接服务器进行完整模型训练时，不会把配置/CPU 测试描述为训练成功。
+
+## 兼容旧移植版
+
+旧 TorchVision 代码保留在 `bacl/` 和 `tools/*_torchvision.py`，
+但仅通过 `--backend torchvision` 显式选择，评估仍为 AP50，不属于原源码后端。
+旧版独立环境需要 Python>=3.10，安装 `python -m pip install -e ".[torchvision]"`。
+用法见 [旧版说明](docs/TORCHVISION_LEGACY.md)，不要混用两套权重。
+
+CPU 原源码/指标审计：
+
+```bash
+# 单独 Python 3.8-3.11 环境；不是 native CUDA 训练环境
+python -m pip install -r requirements-audit.txt
+python -m unittest tests.test_official_backend -v
+```
+
+旧版回归测试为 `tests.test_lvis_data` / `tests.run_lvis_integration`，只验证 TorchVision 后端。
+许可证及原作者信息见 [ATTRIBUTION.md](ATTRIBUTION.md) 和 [原始许可证](third_party/BACL/LICENSE)。
