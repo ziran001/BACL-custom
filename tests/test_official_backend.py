@@ -276,6 +276,63 @@ class OfficialAudit(unittest.TestCase):
             self.assertEqual(check_checkpoint(checkpoint, self.spec, stage='classifier', resume=True),
                              'classifier')
 
+    def checkpoint_with_config(self, stage):
+        checkpoint = self.root / 'model.pth'
+        checkpoint.touch()
+        cfg = self.config(stage)
+        # Metadata inspection must not import dataset/model registration modules.
+        cfg.custom_imports = dict(imports=['bacl_nonexistent_audit_module'], allow_failed_imports=False)
+        cfg.checkpoint_note = '软体数据集 / {{ fileDirname }}'
+        payload = dict(state_dict={'roi_head.bbox_head.fc_cls.weight': np.zeros((3, 4))},
+                       meta={'CLASSES': self.spec.classes, 'config': cfg.pretty_text})
+        return checkpoint, cfg, payload
+
+    def test_checkpoint_config_metadata_works_with_pinned_mmcv(self):
+        original_fromfile = Config.fromfile
+        for stage in ('representation', 'classifier'):
+            with self.subTest(stage=stage):
+                checkpoint, cfg, payload = self.checkpoint_with_config(stage)
+                before = checkpoint.read_bytes()
+                fake_torch = SimpleNamespace(load=lambda *args, **kwargs: payload)
+
+                def read_config(filename, **kwargs):
+                    parsed = original_fromfile(filename, **kwargs)
+                    self.assertEqual(parsed.checkpoint_note, cfg.checkpoint_note)
+                    return parsed
+
+                with patch.dict(sys.modules, {'torch': fake_torch}), \
+                        patch.object(Config, 'fromfile', side_effect=read_config) as parse:
+                    # Stage 2 starts with stage 1, or resumes with its own checkpoint.
+                    self.assertEqual(check_checkpoint(checkpoint, self.spec, stage='classifier',
+                                     resume=(stage == 'classifier')), stage)
+                parse.assert_called_once()
+                self.assertFalse(parse.call_args.kwargs['import_custom_modules'])
+                self.assertFalse(parse.call_args.kwargs['use_predefined_variables'])
+                self.assertFalse(Path(parse.call_args.args[0]).exists())
+                self.assertEqual(checkpoint.read_bytes(), before)
+
+    def test_checkpoint_config_rejects_category_order_mismatch(self):
+        for stage in ('representation', 'classifier'):
+            with self.subTest(stage=stage):
+                checkpoint, cfg, payload = self.checkpoint_with_config(stage)
+                dataset = cfg.data.train.dataset if stage == 'representation' else cfg.data.train
+                dataset.expected_category_ids = list(reversed(self.spec.category_ids))
+                payload['meta']['config'] = cfg.pretty_text
+                fake_torch = SimpleNamespace(load=lambda *args, **kwargs: payload)
+                with patch.dict(sys.modules, {'torch': fake_torch}):
+                    with self.assertRaisesRegex(ValueError, 'config category IDs'):
+                        check_checkpoint(checkpoint, self.spec)
+
+    def test_checkpoint_config_rejects_wrong_training_stage(self):
+        for stage, resume in (('representation', True), ('classifier', False)):
+            with self.subTest(stage=stage, resume=resume):
+                checkpoint, _, payload = self.checkpoint_with_config(stage)
+                fake_torch = SimpleNamespace(load=lambda *args, **kwargs: payload)
+                expected = 'classifier' if resume else 'representation'
+                with patch.dict(sys.modules, {'torch': fake_torch}):
+                    with self.assertRaisesRegex(ValueError, 'Expected {} checkpoint'.format(expected)):
+                        check_checkpoint(checkpoint, self.spec, stage='classifier', resume=resume)
+
     def test_single_gpu_also_gets_distributed_environment(self):
         import os
         with patch.dict(os.environ, {}, clear=True):

@@ -120,6 +120,13 @@ python -m tools.smoke_test --data /root/autodl-tmp/datasets
 默认每轮进行官方 bbox 评估，最佳权重按 bbox_AP 选取。恢复同阶段训练用 `--resume-from`。
 仅加载自己信任的 checkpoint（历史 PyTorch checkpoint 使用 pickle）。
 
+若旧版适配入口在启动第二阶段、恢复训练或评估时报
+`AttributeError: type object 'Config' has no attribute 'fromstring'`，
+这是适配层误用了 MMCV 1.2.7 没有的 API。更新本仓库后重试即可，
+不需要升级 MMCV，也不需要因此重训第一阶段。修复使用临时配置文件和
+`Config.fromfile(..., import_custom_modules=False)` 读取 checkpoint 的配置元数据；
+保留类别顺序和阶段校验，不改写权重文件、数据标注或原 BACL 模型。
+
 CPU 审计在单独环境进行：
 
 ```bash
@@ -129,7 +136,8 @@ python -m unittest tests.test_official_backend -v
 ```
 
 审计包括原文件 SHA、完整模型配置差异、bbox-only pipeline、类别/路径/联邦标注检查、
-配置 round-trip、默认 CLI dry-run，以及真实 mmlvis 和原 evaluate 方法的多 IoU 测试。
+配置 round-trip、含配置元数据的 checkpoint 兼容性与错误拦截、默认 CLI dry-run，
+以及真实 mmlvis 和原 evaluate 方法的多 IoU 测试。
 其中原 evaluate 方法测试只替代结果存储层，不加载 native 检测器，不能当作训练通过。
 `--dry-run`/`--config-only` 明确不测试 checkpoint、模型前后向或服务器 CUDA。
 旧版测试 `tests.run_lvis_integration` 只验证 TorchVision 后端，与 native BACL 验证分开。

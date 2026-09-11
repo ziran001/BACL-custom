@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import socket
 import sys
+import tempfile
 
 from .provenance import UPSTREAM_ROOT, activate_upstream
 
@@ -102,7 +103,17 @@ def check_checkpoint(path, spec, stage=None, resume=False):
     config_text = payload.get('meta', {}).get('config')
     if config_text:
         from mmcv import Config
-        saved_cfg = Config.fromstring(config_text, '.py')
+        # MMCV 1.2.7 has no Config.fromstring. Read the resolved metadata via
+        # its supported file API, without importing model/dataset registrations
+        # or expanding path templates relative to this temporary directory.
+        with tempfile.TemporaryDirectory(prefix='bacl-checkpoint-config-') as directory:
+            config_file = Path(directory) / 'checkpoint_config.py'
+            # Old MMCV reads with the system locale; preserve Unicode string
+            # literals on both Linux and Windows using ASCII Python escapes.
+            config_file.write_text(config_text.encode('ascii', 'backslashreplace').decode('ascii'),
+                                   encoding='ascii')
+            saved_cfg = Config.fromfile(str(config_file), use_predefined_variables=False,
+                                        import_custom_modules=False)
         saved_ds = saved_cfg.data.train
         if saved_ds.type == 'MultiImageMixDataset':
             saved_ds = saved_ds.dataset
