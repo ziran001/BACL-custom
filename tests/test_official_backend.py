@@ -389,6 +389,8 @@ class OfficialAudit(unittest.TestCase):
                 self_outer.assertEqual(Path(image), source / 'one.jpg')
                 self_outer.assertIs(detections, result)
                 self_outer.assertEqual(kwargs['score_thr'], .3)
+                self_outer.assertEqual(kwargs['thickness'], 2)
+                self_outer.assertEqual(kwargs['font_size'], 10)
                 Image.new('RGB', (8, 8)).save(kwargs['out_file'])
 
         self_outer = self
@@ -409,6 +411,8 @@ class OfficialAudit(unittest.TestCase):
         self.assertTrue((output / 'one.jpg').is_file())
         self.assertEqual(report['image_count'], 1)
         self.assertEqual(report['detection_count'], 1)
+        self.assertEqual(report['line_width'], 2)
+        self.assertEqual(report['font_size'], 10)
         self.assertEqual(report['images'][0]['detections'][0]['category_id'], 7)
 
     def test_single_gpu_also_gets_distributed_environment(self):

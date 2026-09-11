@@ -87,6 +87,10 @@ def parse_args():
                         help='Completed stage-2 classifier checkpoint')
     parser.add_argument('--score-thr', type=float, default=.3,
                         help='Only draw and record detections above this confidence')
+    parser.add_argument('--line-width', type=int, default=2,
+                        help='Detection box line width in the rendered image')
+    parser.add_argument('--font-size', type=int, default=10,
+                        help='Class label font size in the rendered image')
     parser.add_argument('--device', default='cuda:0')
     return parser.parse_args()
 
@@ -95,6 +99,8 @@ def main():
     args = parse_args()
     if not math.isfinite(args.score_thr) or not 0 <= args.score_thr <= 1:
         raise ValueError('--score-thr must be a finite value between 0 and 1')
+    if args.line_width < 1 or args.font_size < 1:
+        raise ValueError('--line-width and --font-size must be positive integers')
     images, input_root = find_images(args.input)
     output_root = validate_output(args.input, args.output)
     checkpoint = Path(args.checkpoint).expanduser().resolve()
@@ -122,6 +128,7 @@ def main():
         result = inference_detector(model, str(image_path))
         records = detection_records(result, spec.classes, spec.category_ids, args.score_thr)
         model.show_result(str(image_path), result, score_thr=args.score_thr,
+                          thickness=args.line_width, font_size=args.font_size,
                           show=False, out_file=str(output_file))
         total_detections += len(records)
         image_reports.append({
@@ -141,6 +148,8 @@ def main():
         'input': Path(args.input).expanduser().resolve().as_posix(),
         'output': output_root.as_posix(),
         'score_threshold': args.score_thr,
+        'line_width': args.line_width,
+        'font_size': args.font_size,
         'image_count': len(images),
         'detection_count': total_detections,
         'category_ids': list(spec.category_ids),

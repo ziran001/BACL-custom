@@ -105,12 +105,15 @@ python -m tools.detect \
   --output /root/autodl-tmp/test_results \
   --data /root/autodl-tmp/datasets \
   --checkpoint /root/BACL-custom/runs/official_classifier/best_bbox_AP.pth \
-  --score-thr 0.3
+  --score-thr 0.3 \
+  --line-width 2 \
+  --font-size 10
 ```
 
 输出图片保持输入的相对子目录和文件名，不改写原图。
 `detections.json` 同时记录原 LVIS `category_id`、类别名、置信度、
 `bbox_xyxy` 和 `bbox_xywh`。`--input` 也可直接指定单张图片。
+`--line-width` 和 `--font-size` 只控制画框图片的外观，不改变模型预测结果。
 
 ## 兼容旧移植版
 
