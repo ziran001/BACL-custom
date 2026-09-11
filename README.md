@@ -94,6 +94,24 @@ JSON 和原终端表保留 0..1 标度、三位小数；换算百分数时乘以
 当前 categories 没有 rare 类，所以 APr=-1 表示“不适用”，并非模型 AP 为 0。
 未连接服务器进行完整模型训练时，不会把配置/CPU 测试描述为训练成功。
 
+## 任意图片批量检测
+
+默认递归检测 `/root/autodl-tmp/test` 中的常见图片，使用第二阶段
+`best_bbox_AP.pth`，并将画框图片和 JSON 结果写入数据盘：
+
+```bash
+python -m tools.detect \
+  --input /root/autodl-tmp/test \
+  --output /root/autodl-tmp/test_results \
+  --data /root/autodl-tmp/datasets \
+  --checkpoint /root/BACL-custom/runs/official_classifier/best_bbox_AP.pth \
+  --score-thr 0.3
+```
+
+输出图片保持输入的相对子目录和文件名，不改写原图。
+`detections.json` 同时记录原 LVIS `category_id`、类别名、置信度、
+`bbox_xyxy` 和 `bbox_xywh`。`--input` 也可直接指定单张图片。
+
 ## 兼容旧移植版
 
 旧 TorchVision 代码保留在 `bacl/` 和 `tools/*_torchvision.py`，

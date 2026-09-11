@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -21,6 +21,8 @@ from lvis import LVIS, LVISResults, LVISEval
 
 from bacl_official.config import CONFIGS, build_config
 from bacl_official.data import image_filename, inspect_dataset, load_dataset_spec
+from bacl_official.detection import (detection_records, find_images, main as detect_main,
+                                     validate_output)
 from bacl_official.provenance import PROJECT_ROOT, UPSTREAM_ROOT, verify_upstream
 from bacl_official.runtime import check_checkpoint, prepare_distributed
 
@@ -332,6 +334,82 @@ class OfficialAudit(unittest.TestCase):
                 with patch.dict(sys.modules, {'torch': fake_torch}):
                     with self.assertRaisesRegex(ValueError, 'Expected {} checkpoint'.format(expected)):
                         check_checkpoint(checkpoint, self.spec, stage='classifier', resume=resume)
+
+    def test_arbitrary_image_discovery_and_safe_output(self):
+        source = self.root / 'arbitrary-input'
+        (source / 'nested').mkdir(parents=True)
+        Image.new('RGB', (8, 8)).save(source / 'B.PNG')
+        Image.new('RGB', (8, 8)).save(source / 'nested/a.jpg')
+        (source / 'ignore.txt').write_text('not an image')
+        images, root = find_images(source)
+        self.assertEqual(root, source.resolve())
+        self.assertEqual([path.name for path in images], ['B.PNG', 'a.jpg'])
+        self.assertEqual(find_images(source / 'B.PNG')[0], [(source / 'B.PNG').resolve()])
+        self.assertEqual(validate_output(source, self.root / 'results'),
+                         (self.root / 'results').resolve())
+        with self.assertRaisesRegex(ValueError, 'must not overlap'):
+            validate_output(source, source / 'results')
+        with self.assertRaisesRegex(ValueError, 'must not overlap'):
+            validate_output(source / 'nested', source)
+        with self.assertRaisesRegex(ValueError, 'Unsupported image'):
+            find_images(source / 'ignore.txt')
+
+    def test_detection_records_keep_lvis_ids_and_threshold(self):
+        result = [np.array([[1, 2, 11, 22, .9], [3, 4, 8, 9, .3]]),
+                  np.array([[5, 6, 7, 10, .7]])]
+        records = detection_records(result, self.spec.classes, self.spec.category_ids, .3)
+        self.assertEqual([item['category_id'] for item in records], [7, 42])
+        self.assertEqual([item['class_name'] for item in records], ['snail', 'clam'])
+        self.assertEqual(records[0]['bbox_xyxy'], [1., 2., 11., 22.])
+        self.assertEqual(records[0]['bbox_xywh'], [1., 2., 10., 20.])
+        self.assertAlmostEqual(records[1]['score'], .7)
+
+    def test_detection_cli_help_needs_no_native_cuda_import(self):
+        result = subprocess.run([sys.executable, '-m', 'tools.detect', '--help'],
+                                cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('/root/autodl-tmp/test', result.stdout)
+
+    def test_detection_writes_annotated_images_and_json(self):
+        source = self.root / 'incoming'
+        output = self.root / 'detections'
+        source.mkdir()
+        Image.new('RGB', (8, 8)).save(source / 'one.jpg')
+        checkpoint = self.root / 'classifier.pth'
+        checkpoint.touch()
+        result = [np.array([[1, 2, 7, 6, .8]]), np.empty((0, 5))]
+
+        class FakeModel:
+            CLASSES = self.spec.classes
+
+            def show_result(self, image, detections, **kwargs):
+                self.assert_show_args(image, detections, kwargs)
+
+            def assert_show_args(self, image, detections, kwargs):
+                self_outer.assertEqual(Path(image), source / 'one.jpg')
+                self_outer.assertIs(detections, result)
+                self_outer.assertEqual(kwargs['score_thr'], .3)
+                Image.new('RGB', (8, 8)).save(kwargs['out_file'])
+
+        self_outer = self
+        fake_apis = ModuleType('mmdet.apis')
+        fake_apis.init_detector = lambda *args, **kwargs: FakeModel()
+        fake_apis.inference_detector = lambda *args, **kwargs: result
+        fake_mmdet = ModuleType('mmdet')
+        fake_mmdet.apis = fake_apis
+        argv = ['detect.py', '--input', str(source), '--output', str(output),
+                '--data', str(self.root), '--checkpoint', str(checkpoint)]
+        with patch.object(sys, 'argv', argv), \
+                patch('bacl_official.detection.check_runtime',
+                      return_value={'runtime': {'gpu': 'audit'}}), \
+                patch('bacl_official.detection.check_checkpoint'), \
+                patch.dict(sys.modules, {'mmdet': fake_mmdet, 'mmdet.apis': fake_apis}):
+            detect_main()
+        report = json.loads((output / 'detections.json').read_text(encoding='utf-8'))
+        self.assertTrue((output / 'one.jpg').is_file())
+        self.assertEqual(report['image_count'], 1)
+        self.assertEqual(report['detection_count'], 1)
+        self.assertEqual(report['images'][0]['detections'][0]['category_id'], 7)
 
     def test_single_gpu_also_gets_distributed_environment(self):
         import os
