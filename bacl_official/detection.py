@@ -4,6 +4,8 @@ import json
 import math
 from pathlib import Path
 
+import numpy as np
+
 from .config import build_config
 from .data import DEFAULT_DATA, load_dataset_spec
 from .provenance import PROJECT_ROOT, activate_upstream, verify_upstream
@@ -73,6 +75,37 @@ def detection_records(result, classes, category_ids, score_threshold):
     return records
 
 
+def _box_iou_xyxy(box, other):
+    x1 = max(box[0], other[0])
+    y1 = max(box[1], other[1])
+    x2 = min(box[2], other[2])
+    y2 = min(box[3], other[3])
+    intersection = max(0., x2 - x1) * max(0., y2 - y1)
+    area = max(0., box[2] - box[0]) * max(0., box[3] - box[1])
+    other_area = max(0., other[2] - other[0]) * max(0., other[3] - other[1])
+    union = area + other_area - intersection
+    return intersection / union if union > 0 else 0.
+
+
+def class_agnostic_nms(records, iou_threshold):
+    """Suppress overlapping detections across classes for cleaner visual output."""
+    kept = []
+    for record in sorted(records, key=lambda item: item['score'], reverse=True):
+        box = record['bbox_xyxy']
+        if all(_box_iou_xyxy(box, kept_record['bbox_xyxy']) <= iou_threshold
+               for kept_record in kept):
+            kept.append(record)
+    return kept
+
+
+def records_to_result(records, class_count):
+    """Convert filtered JSON-style records back to MMDetection per-class arrays."""
+    grouped = [[] for _ in range(class_count)]
+    for record in records:
+        grouped[record['label_index']].append(record['bbox_xyxy'] + [record['score']])
+    return [np.asarray(rows, dtype=np.float32).reshape((-1, 5)) for rows in grouped]
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Run the original BACL classifier checkpoint on arbitrary images',
@@ -91,6 +124,10 @@ def parse_args():
                         help='Detection box line width in the rendered image')
     parser.add_argument('--font-size', type=int, default=10,
                         help='Class label font size in the rendered image')
+    parser.add_argument('--agnostic-nms-iou', type=float, default=None,
+                        help=('Optional display/export-only class-agnostic NMS IoU. '
+                              'Use 0.5 to keep only the highest-score box when '
+                              'different classes overlap heavily.'))
     parser.add_argument('--device', default='cuda:0')
     return parser.parse_args()
 
@@ -101,6 +138,10 @@ def main():
         raise ValueError('--score-thr must be a finite value between 0 and 1')
     if args.line_width < 1 or args.font_size < 1:
         raise ValueError('--line-width and --font-size must be positive integers')
+    if args.agnostic_nms_iou is not None:
+        if (not math.isfinite(args.agnostic_nms_iou)
+                or not 0 <= args.agnostic_nms_iou <= 1):
+            raise ValueError('--agnostic-nms-iou must be a finite value between 0 and 1')
     images, input_root = find_images(args.input)
     output_root = validate_output(args.input, args.output)
     checkpoint = Path(args.checkpoint).expanduser().resolve()
@@ -127,7 +168,11 @@ def main():
         output_file.parent.mkdir(parents=True, exist_ok=True)
         result = inference_detector(model, str(image_path))
         records = detection_records(result, spec.classes, spec.category_ids, args.score_thr)
-        model.show_result(str(image_path), result, score_thr=args.score_thr,
+        display_result = result
+        if args.agnostic_nms_iou is not None:
+            records = class_agnostic_nms(records, args.agnostic_nms_iou)
+            display_result = records_to_result(records, len(spec.classes))
+        model.show_result(str(image_path), display_result, score_thr=args.score_thr,
                           thickness=args.line_width, font_size=args.font_size,
                           show=False, out_file=str(output_file))
         total_detections += len(records)
@@ -150,6 +195,7 @@ def main():
         'score_threshold': args.score_thr,
         'line_width': args.line_width,
         'font_size': args.font_size,
+        'agnostic_nms_iou': args.agnostic_nms_iou,
         'image_count': len(images),
         'detection_count': total_detections,
         'category_ids': list(spec.category_ids),

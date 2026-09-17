@@ -21,8 +21,9 @@ from lvis import LVIS, LVISResults, LVISEval
 
 from bacl_official.config import CONFIGS, build_config
 from bacl_official.data import image_filename, inspect_dataset, load_dataset_spec
-from bacl_official.detection import (detection_records, find_images, main as detect_main,
-                                     validate_output)
+from bacl_official.detection import (class_agnostic_nms, detection_records,
+                                     find_images, main as detect_main,
+                                     records_to_result, validate_output)
 from bacl_official.provenance import PROJECT_ROOT, UPSTREAM_ROOT, verify_upstream
 from bacl_official.runtime import check_checkpoint, prepare_distributed
 
@@ -364,6 +365,17 @@ class OfficialAudit(unittest.TestCase):
         self.assertEqual(records[0]['bbox_xywh'], [1., 2., 10., 20.])
         self.assertAlmostEqual(records[1]['score'], .7)
 
+    def test_detection_class_agnostic_nms_suppresses_cross_class_duplicates(self):
+        result = [np.array([[0, 0, 10, 10, .9]]),
+                  np.array([[1, 1, 11, 11, .8], [20, 20, 30, 30, .7]])]
+        records = detection_records(result, self.spec.classes, self.spec.category_ids, .5)
+        filtered = class_agnostic_nms(records, .5)
+        self.assertEqual([item['score'] for item in filtered], [.9, .7])
+        display_result = records_to_result(filtered, len(self.spec.classes))
+        self.assertEqual(display_result[0].shape, (1, 5))
+        self.assertEqual(display_result[1].shape, (1, 5))
+        self.assertAlmostEqual(float(display_result[0][0, 4]), .9)
+
     def test_detection_cli_help_needs_no_native_cuda_import(self):
         result = subprocess.run([sys.executable, '-m', 'tools.detect', '--help'],
                                 cwd=str(PROJECT_ROOT), capture_output=True, text=True)
@@ -377,7 +389,7 @@ class OfficialAudit(unittest.TestCase):
         Image.new('RGB', (8, 8)).save(source / 'one.jpg')
         checkpoint = self.root / 'classifier.pth'
         checkpoint.touch()
-        result = [np.array([[1, 2, 7, 6, .8]]), np.empty((0, 5))]
+        result = [np.array([[1, 2, 7, 6, .8]]), np.array([[1, 2, 7, 6, .7]])]
 
         class FakeModel:
             CLASSES = self.spec.classes
@@ -387,7 +399,9 @@ class OfficialAudit(unittest.TestCase):
 
             def assert_show_args(self, image, detections, kwargs):
                 self_outer.assertEqual(Path(image), source / 'one.jpg')
-                self_outer.assertIs(detections, result)
+                self_outer.assertEqual(len(detections), 2)
+                self_outer.assertEqual(detections[0].shape, (1, 5))
+                self_outer.assertEqual(detections[1].shape, (0, 5))
                 self_outer.assertEqual(kwargs['score_thr'], .3)
                 self_outer.assertEqual(kwargs['thickness'], 2)
                 self_outer.assertEqual(kwargs['font_size'], 10)
@@ -400,7 +414,8 @@ class OfficialAudit(unittest.TestCase):
         fake_mmdet = ModuleType('mmdet')
         fake_mmdet.apis = fake_apis
         argv = ['detect.py', '--input', str(source), '--output', str(output),
-                '--data', str(self.root), '--checkpoint', str(checkpoint)]
+                '--data', str(self.root), '--checkpoint', str(checkpoint),
+                '--agnostic-nms-iou', '.5']
         with patch.object(sys, 'argv', argv), \
                 patch('bacl_official.detection.check_runtime',
                       return_value={'runtime': {'gpu': 'audit'}}), \
@@ -413,6 +428,7 @@ class OfficialAudit(unittest.TestCase):
         self.assertEqual(report['detection_count'], 1)
         self.assertEqual(report['line_width'], 2)
         self.assertEqual(report['font_size'], 10)
+        self.assertEqual(report['agnostic_nms_iou'], .5)
         self.assertEqual(report['images'][0]['detections'][0]['category_id'], 7)
 
     def test_single_gpu_also_gets_distributed_environment(self):
